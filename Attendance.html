@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Simple Attendance</title>
+    <style>
+        :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;line-height:1.4}
+        body{max-width:900px;margin:32px auto;padding:16px}
+        header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+        input,button,select{padding:8px;border:1px solid #cfcfcf;border-radius:6px}
+        table{width:100%;border-collapse:collapse;margin-top:16px}
+        th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+        tr:hover{background:#fafafa}
+        .controls{display:flex;gap:8px;flex-wrap:wrap}
+        .small{font-size:0.9rem;padding:6px}
+        .right{margin-left:auto}
+        .empty{color:#888;margin-top:12px}
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Attendance</h1>
+        <div class="controls">
+            <label>Date <input id="date" type="date"></label>
+            <label>
+                Name
+                <input id="nameInput" placeholder="Add student name" />
+            </label>
+            <button id="addBtn">Add</button>
+            <button id="clearBtn" class="small">Clear list</button>
+            <button id="saveBtn" class="small">Save</button>
+            <button id="exportBtn" class="small">Export CSV</button>
+            <input id="importFile" type="file" accept=".csv" style="display:none" />
+            <button id="importBtn" class="small">Import CSV</button>
+        </div>
+    </header>
+
+    <main>
+        <table id="table" aria-live="polite">
+            <thead>
+                <tr><th>Name</th><th>Status</th><th class="right">Actions</th></tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+        </table>
+        <div id="empty" class="empty">No students yet. Add names above.</div>
+    </main>
+
+    <script>
+        // Simple client-side attendance app. Data persisted in localStorage per date.
+        const dateInput = document.getElementById('date');
+        const nameInput = document.getElementById('nameInput');
+        const addBtn = document.getElementById('addBtn');
+        const tbody = document.getElementById('tbody');
+        const empty = document.getElementById('empty');
+        const saveBtn = document.getElementById('saveBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const importBtn = document.getElementById('importBtn');
+        const importFile = document.getElementById('importFile');
+
+        // Default date = today
+        function todayISO(){ return new Date().toISOString().slice(0,10); }
+        dateInput.value = todayISO();
+
+        function storageKey(date){ return 'attendance:' + date; }
+
+        function loadForDate(date){
+            tbody.innerHTML = '';
+            const raw = localStorage.getItem(storageKey(date));
+            const list = raw ? JSON.parse(raw) : [];
+            if (!list.length){ empty.style.display = 'block'; return; }
+            empty.style.display = 'none';
+            list.forEach((item, idx) => appendRow(item.name, item.status, idx));
+        }
+
+        function saveForDate(date){
+            const rows = Array.from(tbody.rows);
+            const data = rows.map(r => {
+                return { name: r.dataset.name, status: r.querySelector('select').value };
+            });
+            localStorage.setItem(storageKey(date), JSON.stringify(data));
+            alert('Saved for ' + date);
+        }
+
+        function appendRow(name, status = 'Present', index = undefined){
+            empty.style.display = 'none';
+            const tr = document.createElement('tr');
+            tr.dataset.name = name;
+            const nameTd = document.createElement('td');
+            nameTd.textContent = name;
+            const statusTd = document.createElement('td');
+            const sel = document.createElement('select');
+            ['Present','Absent','Late'].forEach(s => {
+                const o = document.createElement('option'); o.value = s; o.textContent = s;
+                if (s === status) o.selected = true;
+                sel.appendChild(o);
+            });
+            statusTd.appendChild(sel);
+            const actionsTd = document.createElement('td');
+            actionsTd.style.textAlign = 'right';
+            const del = document.createElement('button');
+            del.textContent = 'Remove';
+            del.className = 'small';
+            del.onclick = () => { tr.remove(); if (!tbody.rows.length) empty.style.display='block'; };
+            actionsTd.appendChild(del);
+            tr.appendChild(nameTd); tr.appendChild(statusTd); tr.appendChild(actionsTd);
+            tbody.appendChild(tr);
+        }
+
+        addBtn.addEventListener('click', () => {
+            const name = nameInput.value.trim();
+            if (!name) { nameInput.focus(); return; }
+            appendRow(name);
+            nameInput.value = '';
+            nameInput.focus();
+        });
+
+        nameInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') addBtn.click();
+        });
+
+        dateInput.addEventListener('change', () => loadForDate(dateInput.value));
+        saveBtn.addEventListener('click', () => saveForDate(dateInput.value));
+        clearBtn.addEventListener('click', () => {
+            if (!confirm('Clear all students for this date?')) return;
+            tbody.innerHTML = '';
+            localStorage.removeItem(storageKey(dateInput.value));
+            empty.style.display = 'block';
+        });
+
+        exportBtn.addEventListener('click', () => {
+            const date = dateInput.value;
+            const rows = Array.from(tbody.rows);
+            if (!rows.length){ alert('No data to export'); return; }
+            const csv = ['Name,Status,Date']
+                .concat(rows.map(r => `"${r.dataset.name.replace(/"/g,'""')}","${r.querySelector('select').value}","${date}"`))
+                .join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `attendance-${date}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        });
+
+        importBtn.addEventListener('click', () => importFile.click());
+        importFile.addEventListener('change', e => {
+            const f = e.target.files[0];
+            if (!f) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const text = reader.result;
+                const lines = text.split(/\r?\n/).filter(Boolean);
+                // Accept CSV with header Name,Status,... or simple name per line
+                const rows = lines.map((line, i) => {
+                    if (i === 0 && /name/i.test(line.split(',')[0])) return null;
+                    const parts = line.split(',').map(s => s.replace(/^"|"$/g,'').trim());
+                    return parts.length ? parts : null;
+                }).filter(Boolean);
+                if (!rows.length) { alert('No valid rows'); return; }
+                tbody.innerHTML = '';
+                rows.forEach(r => {
+                    const name = r[0] || ('Student ' + (Math.random()*1000|0));
+                    const status = (r[1] || 'Present');
+                    appendRow(name, status);
+                });
+                importFile.value = '';
+            };
+            reader.readAsText(f);
+        });
+
+        // Mark dataset names for rows created from saved data
+        function normalizeDataset(){
+            Array.from(tbody.rows).forEach(r => {
+                if (!r.dataset.name) r.dataset.name = r.cells[0].textContent;
+            });
+        }
+
+        // Initialize from storage
+        loadForDate(dateInput.value);
+
+        // Ensure dataset.name exists when rows added via DOM methods
+        const observer = new MutationObserver(() => normalizeDataset());
+        observer.observe(tbody, { childList: true, subtree: false });
+
+        // Auto-save when navigating away
+        window.addEventListener('beforeunload', () => {
+            try { saveForDate(dateInput.value); } catch(e) {}
+        });
+    </script>
+<style>
+    :root{
+        --bg:#f6f9ff;
+        --card:#ffffff;
+        --muted:#6b7280;
+        --accent:#2563eb;
+        --accent-ghost: rgba(37,99,235,0.08);
+        --success:#10b981;
+        --danger:#ef4444;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial;
+        color:#0f172a;
+        line-height:1.45;
+    }
+
+    *{box-sizing:border-box}
+
+    html,body{height:100%}
+    body{
+        margin:32px auto;
+        max-width:960px;
+        padding:20px;
+        background: linear-gradient(180deg, var(--bg) 0%, #ffffff 60%);
+        -webkit-font-smoothing:antialiased;
+        -moz-osx-font-smoothing:grayscale;
+    }
+
+    header{
+        display:flex;
+        gap:16px;
+        align-items:center;
+        flex-wrap:wrap;
+        background:var(--card);
+        padding:14px;
+        border-radius:12px;
+        box-shadow: 0 6px 18px rgba(15,23,42,0.06);
+    }
+
+    h1{font-size:1.25rem; margin:0; font-weight:600; color:#0b1220}
+
+    .controls{
+        display:flex;
+        gap:10px;
+        align-items:center;
+        flex-wrap:wrap;
+        margin-left:auto;
+    }
+
+    label{display:flex;gap:8px;align-items:center;font-size:0.95rem;color:var(--muted)}
+
+    input[type="date"], input[type="text"], input, select{
+        padding:8px 10px;
+        border:1px solid #e6e9ef;
+        background: #fff;
+        border-radius:8px;
+        font-size:0.95rem;
+        min-height:36px;
+        transition:box-shadow .12s, border-color .12s;
+    }
+
+    input::placeholder{color:#9aa3b2}
+    input:focus, select:focus, button:focus{
+        outline:none;
+        box-shadow: 0 0 0 4px var(--accent-ghost);
+        border-color: var(--accent);
+    }
+
+    button{
+        padding:8px 12px;
+        border-radius:8px;
+        border:1px solid transparent;
+        background:var(--accent);
+        color:white;
+        cursor:pointer;
+        font-size:0.95rem;
+        transition:transform .06s ease, box-shadow .08s;
+    }
+
+    button:hover{box-shadow: 0 6px 18px rgba(37,99,235,0.12)}
+    button:active{ transform: translateY(1px) }
+
+    button.small{
+        background:transparent;
+        color:var(--muted);
+        border:1px solid #eef2ff;
+        padding:6px 8px;
+        font-size:0.88rem;
+    }
+    button.small:hover{ background:#f8fafc; color:#111 }
+
+    table{
+        width:100%;
+        border-collapse:collapse;
+        margin-top:18px;
+        border-radius:10px;
+        overflow:hidden;
+        background:var(--card);
+        box-shadow: 0 4px 14px rgba(2,6,23,0.04);
+    }
+
+    thead th{
+        text-align:left;
+        padding:12px 14px;
+        font-size:0.95rem;
+        color:#0b1220;
+        background: linear-gradient(180deg,#fbfdff,#fff);
+        border-bottom:1px solid #eef2f6;
+        position:sticky;
+        top:0;
+        z-index:2;
+    }
+
+    tbody td{
+        padding:12px 14px;
+        border-bottom:1px solid #f1f5f9;
+        vertical-align:middle;
+        font-size:0.95rem;
+    }
+
+    tbody tr:hover{ background:#fbfdff }
+
+    .right{margin-left:auto; text-align:right}
+
+    .small{font-size:0.9rem;padding:6px}
+
+    .empty{
+        color:var(--muted);
+        margin-top:12px;
+        padding:14px;
+        text-align:center;
+        border-radius:8px;
+        background:linear-gradient(180deg, rgba(255,255,255,0.6), transparent);
+    }
+
+    select{ min-width:120px; padding:7px 8px; border-radius:8px }
+
+    /* status colors for select (visual only) */
+    select option[value="Present"]{ color:var(--success) }
+    select option[value="Absent"]{ color:var(--danger) }
+    select option[value="Late"]{ color:#f59e0b }
+
+    /* responsive */
+    @media (max-width:720px){
+        header{padding:12px}
+        .controls{width:100%; justify-content:flex-start}
+        .right{margin-left:0}
+        thead th, tbody td{padding:10px}
+    }
+
+    /* print */
+    @media print{
+        header, .controls, button, input[type="file"]{ display:none !important; }
+        body{margin:0; background:white}
+        table{box-shadow:none}
+    }
+</style>
+<style>
+    /* ...existing styles... */
+
+    /* status color variants for the select (applies to the select element itself) */
+    .status-select { transition: background-color .12s, border-color .12s, color .12s; color: #0b1220; }
+    .status-present { background-color: rgba(16,184,129,0.10); border-color: rgba(16,184,129,0.24); }
+    .status-absent  { background-color: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.22); }
+    .status-late    { background-color: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.22); }
+
+    /* keep option text coloring as fallback (not all browsers show option styling) */
+    select option[value="Present"]{ color: var(--success) }
+    select option[value="Absent"]{ color: var(--danger) }
+    select option[value="Late"]{ color: #f59e0b }
+
+    /* ...existing styles... */
+</style>
+<script>
+    // ...existing code...
+
+    function appendRow(name, status = 'Present', index = undefined){
+        empty.style.display = 'none';
+        const tr = document.createElement('tr');
+        tr.dataset.name = name;
+        const nameTd = document.createElement('td');
+        nameTd.textContent = name;
+        const statusTd = document.createElement('td');
+        const sel = document.createElement('select');
+
+        ['Present','Absent','Late'].forEach(s => {
+            const o = document.createElement('option'); o.value = s; o.textContent = s;
+            if (s === status) o.selected = true;
+            sel.appendChild(o);
+        });
+
+        // helper to set color class on the select based on value
+        function updateSelectClass(){
+            sel.classList.remove('status-present','status-absent','status-late','status-select');
+            sel.classList.add('status-select');
+            if (sel.value === 'Present') sel.classList.add('status-present');
+            else if (sel.value === 'Absent') sel.classList.add('status-absent');
+            else sel.classList.add('status-late');
+        }
+        sel.addEventListener('change', updateSelectClass);
+        updateSelectClass();
+
+        statusTd.appendChild(sel);
+        const actionsTd = document.createElement('td');
+        actionsTd.style.textAlign = 'right';
+        const del = document.createElement('button');
+        del.textContent = 'Remove';
+        del.className = 'small';
+        del.onclick = () => { tr.remove(); if (!tbody.rows.length) empty.style.display='block'; };
+        actionsTd.appendChild(del);
+        tr.appendChild(nameTd); tr.appendChild(statusTd); tr.appendChild(actionsTd);
+        tbody.appendChild(tr);
+    }
+
+    // ...existing code...
+</script>
+
+</body>
+</html>
